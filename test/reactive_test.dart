@@ -1,0 +1,371 @@
+import 'package:reactive_signals/reactive.dart';
+import 'package:test/test.dart';
+
+void main() {
+  group('Signal', () {
+    test('should hold and update value', () {
+      final s = Signal(10);
+      expect(s.value, equals(10));
+      s.value = 20;
+      expect(s.value, equals(20));
+    });
+
+    test('should notify listener on change', () {
+      final s = Signal(1);
+      int calls = 0;
+      effect(() {
+        s.value;
+        calls++;
+      });
+      expect(calls, equals(1));
+      s.value = 2;
+      expect(calls, equals(2));
+    });
+
+    test('should not notify if value is same', () {
+      final s = Signal(1);
+      int calls = 0;
+      effect(() {
+        s.value;
+        calls++;
+      });
+      expect(calls, equals(1));
+      s.value = 1;
+      expect(calls, equals(1));
+    });
+  });
+
+  group('Computed', () {
+    test('should compute and cache derived value', () {
+      final s = Signal(2);
+      int computations = 0;
+      final c = Computed(() {
+        computations++;
+        return s.value * 2;
+      });
+
+      expect(computations, equals(0)); // lazy evaluation: not computed yet
+      expect(c.value, equals(4));
+      expect(computations, equals(1));
+
+      // Access again, should use cache
+      expect(c.value, equals(4));
+      expect(computations, equals(1));
+
+      // Update signal, should recompute next time it is read
+      s.value = 3;
+      expect(computations, equals(1)); // lazy: not computed immediately
+      expect(c.value, equals(6));
+      expect(computations, equals(2));
+    });
+
+    test('should work with nested computed values', () {
+      final a = Signal(1);
+      final b = Computed(() => a.value + 1);
+      final c = Computed(() => b.value + 1);
+
+      expect(c.value, equals(3));
+      a.value = 10;
+      expect(c.value, equals(12));
+    });
+
+    test('should handle dynamic dependency tracking', () {
+      final condition = Signal(true);
+      final a = Signal('A');
+      final b = Signal('B');
+
+      int computations = 0;
+      final derived = Computed(() {
+        computations++;
+        return condition.value ? a.value : b.value;
+      });
+
+      expect(derived.value, equals('A'));
+      expect(computations, equals(1));
+
+      // Update b (not active dependency) -> should not mark dirty or recompute
+      b.value = 'BB';
+      expect(derived.value, equals('A'));
+      expect(computations, equals(1)); // remains cached
+
+      // Update a -> should recompute
+      a.value = 'AA';
+      expect(derived.value, equals('AA'));
+      expect(computations, equals(2));
+
+      // Switch condition -> should recompute
+      condition.value = false;
+      expect(derived.value, equals('BB'));
+      expect(computations, equals(3));
+
+      // Update a (no longer active dependency) -> should not recompute
+      a.value = 'AAA';
+      expect(derived.value, equals('BB'));
+      expect(computations, equals(3));
+
+      // Update b -> should recompute
+      b.value = 'BBB';
+      expect(derived.value, equals('BBB'));
+      expect(computations, equals(4));
+    });
+
+    test('should detect circular dependency and throw StateError', () {
+      late Computed<int> c1;
+      late Computed<int> c2;
+
+      c1 = Computed(() => c2.value + 1);
+      c2 = Computed(() => c1.value + 1);
+
+      expect(() => c1.value, throwsStateError);
+    });
+  });
+
+  group('Effect', () {
+    test('should run immediately and on dependency changes', () {
+      final s = Signal(1);
+      final list = <int>[];
+      final eff = effect(() {
+        list.add(s.value);
+      });
+
+      expect(list, equals([1]));
+      s.value = 2;
+      expect(list, equals([1, 2]));
+
+      eff.dispose();
+      s.value = 3;
+      expect(list, equals([1, 2])); // no more runs after dispose
+    });
+  });
+
+  group('AutoDispose', () {
+    test('should dispose signal when observers drop to zero', () {
+      int disposeCalls = 0;
+      int listenCalls = 0;
+      final s = Signal(
+        0,
+        autoDispose: true,
+        onDispose: () => disposeCalls++,
+        onListen: () => listenCalls++,
+      );
+
+      expect(disposeCalls, equals(0));
+      expect(listenCalls, equals(0));
+
+      final eff = effect(() {
+        s.value;
+      });
+
+      expect(listenCalls, equals(1));
+      expect(disposeCalls, equals(0));
+
+      eff.dispose();
+
+      expect(disposeCalls, equals(1));
+    });
+
+    test('should support builder chaining with autoDispose()', () {
+      int disposeCalls = 0;
+      final s = Signal(0).autoDispose(onDispose: () => disposeCalls++);
+
+      expect(disposeCalls, equals(1)); // disposed immediately since it starts with 0 observers!
+
+      // Re-observe
+      final eff = effect(() {
+        s.value;
+      });
+      expect(s.isDisposed, isFalse);
+
+      eff.dispose();
+      expect(disposeCalls, equals(2));
+    });
+  });
+
+  group('AsyncSignal', () {
+    test('should transition to AsyncData on success', () async {
+      final s = AsyncSignal.fromFuture(() async {
+        await Future.delayed(const Duration(milliseconds: 10));
+        return 'success';
+      });
+
+      expect(s.value, equals(const AsyncLoading<String>()));
+
+      // Wait for future to complete
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(s.value, equals(const AsyncData('success')));
+
+      // pattern matching
+      final text = s.when(
+        data: (d) => d,
+        loading: () => 'loading',
+        error: (e, st) => 'error',
+      );
+      expect(text, equals('success'));
+    });
+
+    test('should transition to AsyncError on failure', () async {
+      final s = AsyncSignal.fromFuture(() async {
+        await Future.delayed(const Duration(milliseconds: 10));
+        throw Exception('failed');
+      });
+
+      expect(s.value, equals(const AsyncLoading<dynamic>()));
+
+      // Wait for future to complete
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(s.value, isA<AsyncError>());
+      final isErr = s.when(
+        data: (d) => false,
+        loading: () => false,
+        error: (e, st) => true,
+      );
+      expect(isErr, isTrue);
+    });
+
+    test('should support autoDispose and re-fetch when re-observed', () async {
+      int fetchCount = 0;
+      final s = AsyncSignal.fromFuture(
+        () async {
+          fetchCount++;
+          return fetchCount;
+        },
+        autoDispose: true,
+      );
+
+      expect(fetchCount, equals(0)); // lazy, doesn't fetch yet
+      expect(s.value, equals(const AsyncLoading<int>()));
+
+      // First observation
+      final eff1 = effect(() {
+        s.value;
+      });
+
+      expect(fetchCount, equals(1));
+      await Future.delayed(Duration.zero);
+      expect(s.value, equals(const AsyncData(1)));
+
+      // Remove observer -> disposes
+      eff1.dispose();
+      expect(s.isDisposed, isTrue);
+
+      // Re-observe -> should re-fetch
+      final eff2 = effect(() {
+        s.value;
+      });
+
+      expect(fetchCount, equals(2));
+      await Future.delayed(Duration.zero);
+      expect(s.value, equals(const AsyncData(2)));
+
+      eff2.dispose();
+    });
+
+    test('should ignore values if disposed before future completes', () async {
+      int fetchCount = 0;
+      final s = AsyncSignal.fromFuture(
+        () async {
+          fetchCount++;
+          await Future.delayed(const Duration(milliseconds: 10));
+          return fetchCount;
+        },
+        autoDispose: true,
+      );
+
+      final eff = effect(() {
+        s.value;
+      });
+
+      expect(fetchCount, equals(1));
+      expect(s.value, equals(const AsyncLoading<int>()));
+
+      // Dispose before completion
+      eff.dispose();
+      expect(s.isDisposed, isTrue);
+
+      // Wait past duration
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      // The value should still be AsyncLoading (since updates from the old future are ignored)
+      expect(s.value, equals(const AsyncLoading<int>()));
+    });
+  });
+
+  group('SignalObserver', () {
+    test('should monitor creation, changes, and disposal', () {
+      final observer = TestSignalObserver();
+      signalObserver = observer;
+
+      final s = Signal(10);
+      expect(observer.logs, contains('created: 10'));
+
+      s.value = 20;
+      expect(observer.logs, contains('changed: 10 -> 20'));
+
+      s.dispose();
+      expect(observer.logs, contains('disposed: 20'));
+
+      signalObserver = null;
+    });
+  });
+
+  group('SignalFamily', () {
+    test('should cache and return the same signal for the same argument', () {
+      final family = SignalFamily<int, String>((id) => Signal(0));
+
+      final s1 = family('a');
+      final s2 = family('a');
+      final s3 = family('b');
+
+      expect(s1, same(s2));
+      expect(s1, isNot(same(s3)));
+    });
+
+    test('should evict signal from cache when disposed under autoDispose', () {
+      final family = SignalFamily<int, String>((id) => Signal(0, autoDispose: true));
+
+      final s1 = family('a');
+      expect(family.cache.containsKey('a'), isTrue);
+
+      final eff = effect(() {
+        s1.value;
+      });
+      eff.dispose();
+
+      expect(family.cache.containsKey('a'), isFalse);
+    });
+  });
+
+  group('AsyncSignalFamily', () {
+    test('should cache and return the same async signal for the same argument', () {
+      final family = AsyncSignalFamily<int, String>((id) => AsyncSignal.fromFuture(() async => 0));
+
+      final s1 = family('a');
+      final s2 = family('a');
+      final s3 = family('b');
+
+      expect(s1, same(s2));
+      expect(s1, isNot(same(s3)));
+    });
+  });
+}
+
+class TestSignalObserver extends SignalObserver {
+  final List<String> logs = [];
+
+  @override
+  void onSignalCreated(Signal signal) {
+    logs.add('created: ${signal.value}');
+  }
+
+  @override
+  void onSignalChanged(Signal signal, Object? oldValue, Object? newValue) {
+    logs.add('changed: $oldValue -> $newValue');
+  }
+
+  @override
+  void onSignalDisposed(Signal signal) {
+    logs.add('disposed: ${signal.value}');
+  }
+}
