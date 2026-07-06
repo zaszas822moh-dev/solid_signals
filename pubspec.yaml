@@ -1,7 +1,6 @@
-name: reactive_signals
-description: A minimal, pure Dart reactive signals library.
+name: solid_signals
+description: A high-performance, ultra-lightweight, and fine-grained reactive state management solution for Flutter.
 version: 1.0.0
-publish_to: none
 repository: https://github.com/zaszas822moh-dev/solid_signals
 
 environment:
