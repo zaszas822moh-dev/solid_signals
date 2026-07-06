@@ -2,6 +2,7 @@ name: reactive_signals
 description: A minimal, pure Dart reactive signals library.
 version: 1.0.0
 publish_to: none
+repository: https://github.com/zaszas822moh-dev/solid_signals
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
