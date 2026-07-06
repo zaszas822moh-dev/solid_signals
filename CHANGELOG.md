@@ -4,3 +4,7 @@
 * Core `Signal` and `Computed` reactivity engine.
 * Added `Observe` widget and `.watch(context)` extension for surgical UI rebuilds.
 * Built-in asynchronous state management with `AsyncSignal`.
+
+## 1.0.1
+
+* Add official repository and documentation website links.
