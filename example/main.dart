@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:solid_signals/reactive_flutter.dart';
 
@@ -26,12 +27,25 @@ const mockProducts = [
   Product(id: '3', name: 'Ergonomic Vertical Mouse', price: 79.99, description: 'Designed to reduce muscle strain and improve wrist alignment.'),
 ];
 
-// Signals & Computeds
-final cart = Signal<List<Product>>([]);
-final cartTotal = Computed(() => cart.value.fold<double>(0.0, (sum, item) => sum + item.price));
+// Signals & Computeds using new extensions and persistence API
+final cart = <Product>[].toSignal(name: 'cart').hydrate(
+  key: 'shopping_cart',
+  fromJson: (jsonStr) {
+    final list = json.decode(jsonStr) as List;
+    return list.map((item) {
+      final map = item as Map<String, dynamic>;
+      return mockProducts.firstWhere((p) => p.id == map['id']);
+    }).toList();
+  },
+  toJson: (list) {
+    return json.encode(list.map((p) => {'id': p.id}).toList());
+  },
+);
+
+final cartTotal = (() => cart.value.fold<double>(0.0, (sum, item) => sum + item.price)).computed;
 
 // Active selected product ID for details screen
-final selectedProductId = Signal<String?>(null);
+final selectedProductId = (null as String?).toSignal(name: 'selectedProductId');
 
 // Signal Family: Fetches detailed reviews / extra details for a product asynchronously
 final productDetailFamily = AsyncSignalFamily<String, String>(
@@ -42,38 +56,18 @@ final productDetailFamily = AsyncSignalFamily<String, String>(
       final product = mockProducts.firstWhere((p) => p.id == productId);
       return "Highly rated! Customers say: \"Amazing build quality and excellent value. The ${product.name} exceeded my expectations!\"";
     },
+    name: 'review_$productId',
     autoDispose: true, // Dispose and clear cache when modal sheet closes!
   ),
 );
 
 // ==========================================
-// 2. Central Monitoring via SignalObserver
-// ==========================================
-
-class ConsoleSignalObserver extends SignalObserver {
-  @override
-  void onSignalCreated(Signal signal) {
-    print("[Observer] Signal Created: ${signal.runtimeType} (initial: ${signal.value})");
-  }
-
-  @override
-  void onSignalChanged(Signal signal, Object? oldValue, Object? newValue) {
-    print("[Observer] Signal Changed: ${signal.runtimeType} | $oldValue -> $newValue");
-  }
-
-  @override
-  void onSignalDisposed(Signal signal) {
-    print("[Observer] Signal Disposed: ${signal.runtimeType} (final: ${signal.value})");
-  }
-}
-
-// ==========================================
-// 3. Application Entrypoint
+// 2. Application Entrypoint
 // ==========================================
 
 void main() {
-  // Register the observer
-  signalObserver = ConsoleSignalObserver();
+  // Enable the global built-in ConsoleSignalObserver to log signal lifecycles to console!
+  SignalObserver.enableLogging();
 
   runApp(const MyApp());
 }
