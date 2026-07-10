@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:solid_signals/reactive.dart';
 import 'package:test/test.dart';
 
@@ -237,42 +238,29 @@ void main() {
       expect(fetchCount, equals(0)); // lazy, doesn't fetch yet
       expect(s.value, equals(const AsyncLoading<int>()));
 
-      print('=== TEST START ===');
       // First observation
-      print('Creating eff1');
       final eff1 = effect(() {
         s.value;
       });
 
-      print('fetchCount after eff1: $fetchCount');
       expect(fetchCount, equals(1));
-      print('Awaiting delay');
       await Future.delayed(Duration.zero);
-      print('s.value: ${s.value}');
       expect(s.value, equals(const AsyncData(1)));
 
       // Remove observer -> disposes
-      print('Disposing eff1');
       eff1.dispose();
-      print('s.isDisposed: ${s.isDisposed}');
       expect(s.isDisposed, isTrue);
 
       // Re-observe -> should re-fetch
-      print('Creating eff2');
       final eff2 = effect(() {
         s.value;
       });
 
-      print('fetchCount after eff2: $fetchCount');
       expect(fetchCount, equals(2));
-      print('Awaiting delay 2');
       await Future.delayed(Duration.zero);
-      print('s.value 2: ${s.value}');
       expect(s.value, equals(const AsyncData(2)));
 
-      print('Disposing eff2');
       eff2.dispose();
-      print('=== TEST END ===');
     });
 
     test('should ignore values if disposed before future completes', () async {
@@ -451,6 +439,70 @@ void main() {
         data: (d) => 'data ${d.value}',
         orElse: () => 'else',
       ), equals('data 42'));
+    });
+  });
+
+  group('Dart Extensions', () {
+    test('should wrap value in Signal using .signal extension', () {
+      final s = 42.signal;
+      expect(s, isA<Signal<int>>());
+      expect(s.value, equals(42));
+    });
+
+    test('should wrap value in Signal with custom name using .toSignal extension', () {
+      final s = 'hello'.toSignal(name: 'greeting');
+      expect(s, isA<Signal<String>>());
+      expect(s.value, equals('hello'));
+      expect(s.name, equals('greeting'));
+    });
+
+    test('should wrap function in Computed using .computed extension', () {
+      final count = 10.signal;
+      final doubled = (() => count.value * 2).computed;
+      expect(doubled, isA<Computed<int>>());
+      expect(doubled.value, equals(20));
+
+      count.value = 15;
+      expect(doubled.value, equals(30));
+    });
+
+    test('should wrap and run function in Effect using .effect extension', () {
+      final count = 5.signal;
+      int triggerCount = 0;
+      final eff = (() {
+        count.value;
+        triggerCount++;
+      }).effect;
+
+      expect(eff, isA<Effect>());
+      expect(triggerCount, equals(1));
+
+      count.value = 10;
+      expect(triggerCount, equals(2));
+      eff.dispose();
+    });
+  });
+
+  group('ConsoleSignalObserver', () {
+    test('should print lifecycle events if enabled', () {
+      final printedLogs = <String>[];
+      final zoneSpec = ZoneSpecification(
+        print: (self, parent, zone, line) {
+          printedLogs.add(line);
+        },
+      );
+
+      Zone.current.fork(specification: zoneSpec).run(() {
+        SignalObserver.enableLogging();
+        final s = Signal(10, name: 'my_test_signal');
+        s.value = 20;
+        s.dispose();
+        signalObserver = null;
+      });
+
+      expect(printedLogs, contains('[Signal Created] my_test_signal'));
+      expect(printedLogs, contains('[Signal Changed] my_test_signal: 10 -> 20'));
+      expect(printedLogs, contains('[Signal Disposed] my_test_signal'));
     });
   });
 }
