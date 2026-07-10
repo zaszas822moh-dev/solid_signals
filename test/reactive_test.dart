@@ -1,4 +1,4 @@
-import 'package:reactive_signals/reactive.dart';
+import 'package:solid_signals/reactive.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -237,29 +237,42 @@ void main() {
       expect(fetchCount, equals(0)); // lazy, doesn't fetch yet
       expect(s.value, equals(const AsyncLoading<int>()));
 
+      print('=== TEST START ===');
       // First observation
+      print('Creating eff1');
       final eff1 = effect(() {
         s.value;
       });
 
+      print('fetchCount after eff1: $fetchCount');
       expect(fetchCount, equals(1));
+      print('Awaiting delay');
       await Future.delayed(Duration.zero);
+      print('s.value: ${s.value}');
       expect(s.value, equals(const AsyncData(1)));
 
       // Remove observer -> disposes
+      print('Disposing eff1');
       eff1.dispose();
+      print('s.isDisposed: ${s.isDisposed}');
       expect(s.isDisposed, isTrue);
 
       // Re-observe -> should re-fetch
+      print('Creating eff2');
       final eff2 = effect(() {
         s.value;
       });
 
+      print('fetchCount after eff2: $fetchCount');
       expect(fetchCount, equals(2));
+      print('Awaiting delay 2');
       await Future.delayed(Duration.zero);
+      print('s.value 2: ${s.value}');
       expect(s.value, equals(const AsyncData(2)));
 
+      print('Disposing eff2');
       eff2.dispose();
+      print('=== TEST END ===');
     });
 
     test('should ignore values if disposed before future completes', () async {
@@ -347,6 +360,97 @@ void main() {
 
       expect(s1, same(s2));
       expect(s1, isNot(same(s3)));
+    });
+  });
+
+  group('AsyncValue and AsyncSignal Enhancements', () {
+    test('AsyncValue getters and map methods', () {
+      const loading = AsyncLoading<int>();
+      expect(loading.isLoading, isTrue);
+      expect(loading.hasError, isFalse);
+      expect(loading.hasValue, isFalse);
+      expect(loading.hasData, isFalse);
+      expect(loading.data, isNull);
+      expect(loading.valueOrNull, isNull);
+      expect(() => loading.requireValue, throwsStateError);
+
+      const error = AsyncError<int>('err', StackTrace.empty);
+      expect(error.isLoading, isFalse);
+      expect(error.hasError, isTrue);
+      expect(error.hasValue, isFalse);
+      expect(error.data, isNull);
+      expect(() => error.requireValue, throwsStateError);
+
+      const data = AsyncData<int>(42);
+      expect(data.isLoading, isFalse);
+      expect(data.hasError, isFalse);
+      expect(data.hasValue, isTrue);
+      expect(data.data, equals(42));
+      expect(data.valueOrNull, equals(42));
+      expect(data.requireValue, equals(42));
+
+      // Test map
+      expect(loading.map(
+        data: (d) => 'data',
+        loading: (l) => 'loading',
+        error: (e) => 'error',
+      ), equals('loading'));
+
+      expect(error.map(
+        data: (d) => 'data',
+        loading: (l) => 'loading',
+        error: (e) => 'error',
+      ), equals('error'));
+
+      expect(data.map(
+        data: (d) => 'data ${d.value}',
+        loading: (l) => 'loading',
+        error: (e) => 'error',
+      ), equals('data 42'));
+
+      // Test maybeMap
+      expect(loading.maybeMap(
+        loading: (l) => 'loading',
+        orElse: () => 'else',
+      ), equals('loading'));
+
+      expect(loading.maybeMap(
+        data: (d) => 'data',
+        orElse: () => 'else',
+      ), equals('else'));
+    });
+
+    test('AsyncSignal delegation', () async {
+      final s = AsyncSignal.fromFuture(() async {
+        await Future.delayed(const Duration(milliseconds: 10));
+        return 42;
+      });
+
+      expect(s.isLoading, isTrue);
+      expect(s.hasError, isFalse);
+      expect(s.hasValue, isFalse);
+      expect(s.data, isNull);
+
+      await Future.delayed(const Duration(milliseconds: 15));
+
+      expect(s.isLoading, isFalse);
+      expect(s.hasError, isFalse);
+      expect(s.hasValue, isTrue);
+      expect(s.hasData, isTrue);
+      expect(s.data, equals(42));
+      expect(s.valueOrNull, equals(42));
+      expect(s.requireValue, equals(42));
+
+      expect(s.map(
+        data: (d) => 'data ${d.value}',
+        loading: (l) => 'loading',
+        error: (e) => 'error',
+      ), equals('data 42'));
+
+      expect(s.maybeMap(
+        data: (d) => 'data ${d.value}',
+        orElse: () => 'else',
+      ), equals('data 42'));
     });
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'consumer.dart';
 import 'node.dart';
 import 'observer.dart';
@@ -12,6 +13,9 @@ import 'observer.dart';
 class Signal<T> extends Node {
   T _value;
 
+  /// Optional name for debugging and observation.
+  final String? name;
+
   /// Whether this signal should automatically dispose of its resources when it has no observers.
   bool autoDisposeEnabled;
 
@@ -24,9 +28,13 @@ class Signal<T> extends Node {
   /// Tracks whether the signal is currently in a disposed state.
   bool isDisposed = false;
 
+  /// Tracks if this signal has ever been observed.
+  bool _hasBeenObserved = false;
+
   /// Creates a new [Signal] with the given initial value and optional lifecycle callbacks.
   Signal(
     this._value, {
+    this.name,
     bool autoDispose = false,
     void Function()? onDispose,
     void Function()? onListen,
@@ -62,14 +70,24 @@ class Signal<T> extends Node {
     onDisposeCallback?.call();
   }
 
+  /// Sets the value of this signal without notifying its observers.
+  void setValueSilently(T newValue) {
+    if (_value != newValue) {
+      final oldValue = _value;
+      _value = newValue;
+      signalObserver?.onSignalChanged(this, oldValue, newValue);
+    }
+  }
+
   @override
   void addObserver(Consumer consumer) {
+    final shouldTriggerListen = isDisposed || !_hasBeenObserved;
     if (isDisposed) {
       isDisposed = false;
     }
-    final wasEmpty = observers.isEmpty;
+    _hasBeenObserved = true;
     super.addObserver(consumer);
-    if (wasEmpty) {
+    if (shouldTriggerListen) {
       onListenCallback?.call();
     }
   }
@@ -78,7 +96,15 @@ class Signal<T> extends Node {
   void removeObserver(Consumer consumer) {
     super.removeObserver(consumer);
     if (autoDisposeEnabled && observers.isEmpty && !isDisposed) {
-      dispose();
+      if (consumerStack.isNotEmpty) {
+        scheduleMicrotask(() {
+          if (observers.isEmpty && !isDisposed) {
+            dispose();
+          }
+        });
+      } else {
+        dispose();
+      }
     }
   }
 
@@ -117,5 +143,5 @@ class Signal<T> extends Node {
   }
 
   @override
-  String toString() => 'Signal($value)';
+  String toString() => 'Signal($_value)';
 }

@@ -54,8 +54,8 @@ class Computed<T> extends Node implements DependencyTracker {
         throw StateError("Circular dependency detected during evaluation of Computed!");
       }
       _isComputing = true;
-      clearDependencies();
       pushConsumer(this);
+      clearDependencies();
       try {
         _cachedValue = _computeFn();
         _isDirty = false;

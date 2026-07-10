@@ -17,11 +17,13 @@ class AsyncSignal<T> extends Signal<AsyncValue<T>> {
   /// the future when observed again.
   AsyncSignal.fromFuture(
     Future<T> Function() futureFn, {
+    String? name,
     bool autoDispose = false,
     void Function()? onDispose,
   })  : _futureFn = futureFn,
         super(
           const AsyncLoading(),
+          name: name,
           autoDispose: autoDispose,
           onDispose: onDispose,
         ) {
@@ -35,7 +37,7 @@ class AsyncSignal<T> extends Signal<AsyncValue<T>> {
   void _fetch() async {
     // If not already loading, switch to loading state
     if (value is! AsyncLoading<T>) {
-      value = const AsyncLoading();
+      setValueSilently(const AsyncLoading());
     }
 
     final execId = ++_currentExecutionId;
@@ -67,6 +69,55 @@ class AsyncSignal<T> extends Signal<AsyncValue<T>> {
       data: data,
       loading: loading,
       error: error,
+    );
+  }
+
+  /// Returns `true` if the state is [AsyncLoading].
+  bool get isLoading => value.isLoading;
+
+  /// Returns `true` if the state is [AsyncError].
+  bool get hasError => value.hasError;
+
+  /// Returns `true` if the state is [AsyncData].
+  bool get hasValue => value.hasValue;
+
+  /// Alias for [hasValue].
+  bool get hasData => value.hasData;
+
+  /// Returns the value if the state is [AsyncData], otherwise `null`.
+  T? get data => value.data;
+
+  /// Returns the value if the state is [AsyncData], otherwise `null`.
+  T? get valueOrNull => value.valueOrNull;
+
+  /// Returns the value if the state is [AsyncData], otherwise throws a [StateError].
+  T get requireValue => value.requireValue;
+
+  /// Transforms the state to another type by matching the wrapper class.
+  R map<R>({
+    required R Function(AsyncData<T> data) data,
+    required R Function(AsyncLoading<T> loading) loading,
+    required R Function(AsyncError<T> error) error,
+  }) {
+    return value.map(
+      data: data,
+      loading: loading,
+      error: error,
+    );
+  }
+
+  /// Transforms the state to another type by matching the wrapper class, falling back to [orElse] if unmatched.
+  R maybeMap<R>({
+    R Function(AsyncData<T> data)? data,
+    R Function(AsyncLoading<T> loading)? loading,
+    R Function(AsyncError<T> error)? error,
+    required R Function() orElse,
+  }) {
+    return value.maybeMap(
+      data: data,
+      loading: loading,
+      error: error,
+      orElse: orElse,
     );
   }
 

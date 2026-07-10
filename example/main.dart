@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:reactive_signals/reactive_flutter.dart';
+import 'package:solid_signals/reactive_flutter.dart';
 
 // ==========================================
 // 1. Core Models and State

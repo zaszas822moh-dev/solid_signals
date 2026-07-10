@@ -14,6 +14,50 @@ sealed class AsyncValue<T> {
     required R Function() loading,
     required R Function(Object error, StackTrace stackTrace) error,
   });
+
+  /// Transforms the state to another type by matching the wrapper class.
+  R map<R>({
+    required R Function(AsyncData<T> data) data,
+    required R Function(AsyncLoading<T> loading) loading,
+    required R Function(AsyncError<T> error) error,
+  });
+
+  /// Transforms the state to another type by matching the wrapper class, falling back to [orElse] if unmatched.
+  R maybeMap<R>({
+    R Function(AsyncData<T> data)? data,
+    R Function(AsyncLoading<T> loading)? loading,
+    R Function(AsyncError<T> error)? error,
+    required R Function() orElse,
+  });
+
+  /// Returns `true` if the state is [AsyncLoading].
+  bool get isLoading => this is AsyncLoading<T>;
+
+  /// Returns `true` if the state is [AsyncError].
+  bool get hasError => this is AsyncError<T>;
+
+  /// Returns `true` if the state is [AsyncData].
+  bool get hasValue => this is AsyncData<T>;
+
+  /// Alias for [hasValue].
+  bool get hasData => hasValue;
+
+  /// Returns the value if the state is [AsyncData], otherwise `null`.
+  T? get data => when(
+        data: (d) => d,
+        loading: () => null,
+        error: (e, s) => null,
+      );
+
+  /// Returns the value if the state is [AsyncData], otherwise `null`.
+  T? get valueOrNull => data;
+
+  /// Returns the value if the state is [AsyncData], otherwise throws a [StateError].
+  T get requireValue => when(
+        data: (d) => d,
+        loading: () => throw StateError('AsyncValue is in Loading state'),
+        error: (e, s) => throw StateError('AsyncValue has error: $e'),
+      );
 }
 
 /// The state of an [AsyncValue] when the asynchronous operation has completed successfully.
@@ -31,6 +75,26 @@ class AsyncData<T> extends AsyncValue<T> {
     required R Function(Object error, StackTrace stackTrace) error,
   }) {
     return data(value);
+  }
+
+  @override
+  R map<R>({
+    required R Function(AsyncData<T> data) data,
+    required R Function(AsyncLoading<T> loading) loading,
+    required R Function(AsyncError<T> error) error,
+  }) {
+    return data(this);
+  }
+
+  @override
+  R maybeMap<R>({
+    R Function(AsyncData<T> data)? data,
+    R Function(AsyncLoading<T> loading)? loading,
+    R Function(AsyncError<T> error)? error,
+    required R Function() orElse,
+  }) {
+    if (data != null) return data(this);
+    return orElse();
   }
 
   @override
@@ -56,6 +120,26 @@ class AsyncLoading<T> extends AsyncValue<T> {
     required R Function(Object error, StackTrace stackTrace) error,
   }) {
     return loading();
+  }
+
+  @override
+  R map<R>({
+    required R Function(AsyncData<T> data) data,
+    required R Function(AsyncLoading<T> loading) loading,
+    required R Function(AsyncError<T> error) error,
+  }) {
+    return loading(this);
+  }
+
+  @override
+  R maybeMap<R>({
+    R Function(AsyncData<T> data)? data,
+    R Function(AsyncLoading<T> loading)? loading,
+    R Function(AsyncError<T> error)? error,
+    required R Function() orElse,
+  }) {
+    if (loading != null) return loading(this);
+    return orElse();
   }
 
   @override
@@ -86,6 +170,26 @@ class AsyncError<T> extends AsyncValue<T> {
     required R Function(Object error, StackTrace stackTrace) error,
   }) {
     return error(this.error, stackTrace);
+  }
+
+  @override
+  R map<R>({
+    required R Function(AsyncData<T> data) data,
+    required R Function(AsyncLoading<T> loading) loading,
+    required R Function(AsyncError<T> error) error,
+  }) {
+    return error(this);
+  }
+
+  @override
+  R maybeMap<R>({
+    R Function(AsyncData<T> data)? data,
+    R Function(AsyncLoading<T> loading)? loading,
+    R Function(AsyncError<T> error)? error,
+    required R Function() orElse,
+  }) {
+    if (error != null) return error(this);
+    return orElse();
   }
 
   @override

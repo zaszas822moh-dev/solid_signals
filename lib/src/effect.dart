@@ -20,8 +20,8 @@ class Effect implements DependencyTracker {
   void run() {
     if (_isDisposed) return;
 
-    clearDependencies();
     pushConsumer(this);
+    clearDependencies();
     try {
       _fn();
     } finally {
@@ -34,8 +34,8 @@ class Effect implements DependencyTracker {
   /// This registers any signals read during [fn] as dependencies of this effect.
   R track<R>(R Function() fn) {
     if (_isDisposed) return fn();
-    clearDependencies();
     pushConsumer(this);
+    clearDependencies();
     try {
       return fn();
     } finally {
