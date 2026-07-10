@@ -7,3 +7,4 @@ export 'src/family.dart' show SignalFamily, AsyncSignalFamily;
 export 'src/observer.dart' show SignalObserver, signalObserver, ConsoleSignalObserver;
 export 'src/signal.dart' show Signal;
 export 'src/extensions.dart';
+export 'src/persistence.dart';

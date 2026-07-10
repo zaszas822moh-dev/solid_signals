@@ -505,6 +505,74 @@ void main() {
       expect(printedLogs, contains('[Signal Disposed] my_test_signal'));
     });
   });
+
+  group('Persistence and Hydration', () {
+    test('should load existing value from storage on initialization', () {
+      final storage = InMemorySignalStorage();
+      storage.write('counter_key', '42');
+
+      final counter = 0.signal.hydrate(
+        key: 'counter_key',
+        fromJson: int.parse,
+        toJson: (v) => v.toString(),
+        storage: storage,
+      );
+
+      expect(counter.value, equals(42));
+    });
+
+    test('should fallback to default value if key not found in storage', () {
+      final storage = InMemorySignalStorage();
+
+      final counter = 100.signal.hydrate(
+        key: 'missing_key',
+        fromJson: int.parse,
+        toJson: (v) => v.toString(),
+        storage: storage,
+      );
+
+      expect(counter.value, equals(100));
+      expect(storage.read('missing_key'), equals('100'));
+    });
+
+    test('should persist updates automatically when signal value changes', () {
+      final storage = InMemorySignalStorage();
+      final counter = 0.signal.hydrate(
+        key: 'live_counter',
+        fromJson: int.parse,
+        toJson: (v) => v.toString(),
+        storage: storage,
+      );
+
+      expect(counter.value, equals(0));
+      expect(storage.read('live_counter'), equals('0'));
+
+      counter.value = 15;
+      expect(storage.read('live_counter'), equals('15'));
+
+      counter.value = 25;
+      expect(storage.read('live_counter'), equals('25'));
+    });
+
+    test('should support globalSignalStorage', () {
+      final storage = InMemorySignalStorage();
+      globalSignalStorage = storage;
+
+      final counter = 50.signal.hydrate(
+        key: 'global_counter',
+        fromJson: int.parse,
+        toJson: (v) => v.toString(),
+      );
+
+      expect(counter.value, equals(50));
+      expect(storage.read('global_counter'), equals('50'));
+
+      counter.value = 99;
+      expect(storage.read('global_counter'), equals('99'));
+
+      globalSignalStorage = null;
+    });
+  });
 }
 
 class TestSignalObserver extends SignalObserver {
