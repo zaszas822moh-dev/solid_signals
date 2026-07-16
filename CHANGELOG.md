@@ -1,4 +1,4 @@
-## Unreleased
+## 1.0.3
 
 * Added cancellable Signal.listen subscriptions with previous/current values.
 * Added Signal.peek for untracked reads.
