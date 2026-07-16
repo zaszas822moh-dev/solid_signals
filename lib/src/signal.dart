@@ -2,6 +2,7 @@ import 'dart:async';
 import 'consumer.dart';
 import 'node.dart';
 import 'observer.dart';
+import 'signal_subscription.dart';
 
 /// A [Signal] holds a single reactive value of type [T].
 ///
@@ -123,6 +124,9 @@ class Signal<T> extends Node {
     return _value;
   }
 
+  /// Returns the current value without registering a reactive dependency.
+  T peek() => _value;
+
   /// Sets a new value for the signal.
   ///
   /// If the new value is different from the current value (using standard `!=` equality),
@@ -140,6 +144,22 @@ class Signal<T> extends Node {
         endBatch();
       }
     }
+  }
+
+  /// Listens to value changes without creating an [Effect] manually.
+  ///
+  /// The callback receives the previous and current values. Set
+  /// [fireImmediately] to invoke it once on subscription with the current value
+  /// as both arguments. Call [SignalSubscription.cancel] to stop listening.
+  SignalSubscription<T> listen(
+    void Function(T previous, T current) listener, {
+    bool fireImmediately = false,
+  }) {
+    return SignalSubscription<T>(
+      this,
+      listener,
+      fireImmediately: fireImmediately,
+    );
   }
 
   @override

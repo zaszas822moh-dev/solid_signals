@@ -1,112 +1,270 @@
+import 'dart:async';
+
+import '../consumer.dart';
+import '../node.dart';
 import '../signal.dart';
 import 'async_value.dart';
 
-/// A [Signal] specifically designed to manage the state of asynchronous operations.
+/// Reactive state for a Future or Stream operation.
 ///
-/// It wraps an [AsyncValue<T>] which can represent loading, success (with data), or error.
-/// It supports dynamic re-fetching, execution ID tracking to ignore out-of-order completions,
-/// and works seamlessly with [autoDispose] to only execute the future when observed.
-class AsyncSignal<T> extends Signal<AsyncValue<T>> {
-  final Future<T> Function() _futureFn;
-  int _currentExecutionId = 0;
+/// Signal reads performed synchronously by the source factory are tracked.
+/// Changing one of those dependencies automatically reloads the operation.
+class AsyncSignal<T> extends Signal<AsyncValue<T>>
+    implements DependencyTracker {
+  final Future<T> Function()? _futureFactory;
+  final Stream<T> Function()? _streamFactory;
+  final FutureOr<void> Function()? _onCancel;
+  final Set<Node> _dependencies = {};
 
-  /// Creates an [AsyncSignal] from a future-returning function.
+  StreamSubscription<T>? _streamSubscription;
+  int _currentExecutionId = 0;
+  bool _operationActive = false;
+
+  /// Creates an AsyncSignal from a Future factory.
   ///
-  /// If [autoDispose] is true, the future is not run until the signal receives its first observer.
-  /// When all observers leave, it disposes and cancels the active future updates, and will re-run
-  /// the future when observed again.
+  /// Dart Futures are not intrinsically cancellable. Use [onCancel] to cancel
+  /// the underlying HTTP request, isolate task, or other operation when this
+  /// signal reloads or is disposed.
   AsyncSignal.fromFuture(
     Future<T> Function() futureFn, {
     String? name,
     bool autoDispose = false,
     void Function()? onDispose,
-  })  : _futureFn = futureFn,
+    FutureOr<void> Function()? onCancel,
+  })  : _futureFactory = futureFn,
+        _streamFactory = null,
+        _onCancel = onCancel,
         super(
           const AsyncLoading(),
           name: name,
           autoDispose: autoDispose,
           onDispose: onDispose,
         ) {
+    _initialize();
+  }
+
+  /// Creates an AsyncSignal from a Stream factory.
+  ///
+  /// The active stream subscription is canceled on reload and disposal.
+  AsyncSignal.fromStream(
+    Stream<T> Function() streamFn, {
+    String? name,
+    bool autoDispose = false,
+    void Function()? onDispose,
+    FutureOr<void> Function()? onCancel,
+  })  : _futureFactory = null,
+        _streamFactory = streamFn,
+        _onCancel = onCancel,
+        super(
+          const AsyncLoading(),
+          name: name,
+          autoDispose: autoDispose,
+          onDispose: onDispose,
+        ) {
+    _initialize();
+  }
+
+  void _initialize() {
     if (autoDisposeEnabled) {
-      onListenCallback = _fetch;
+      onListenCallback = () {
+        unawaited(_start());
+      };
     } else {
-      _fetch();
+      unawaited(_start());
     }
   }
 
-  void _fetch() async {
-    // If not already loading, switch to loading state
-    if (value is! AsyncLoading<T>) {
-      setValueSilently(const AsyncLoading());
-    }
+  Future<void> _start() async {
+    if (isDisposed) return;
 
-    final execId = ++_currentExecutionId;
+    final executionId = ++_currentExecutionId;
+    _cancelActive();
+
+    final previous = _previousData(peek());
+    value = AsyncLoading<T>(previous);
+
+    if (_futureFactory != null) {
+      await _startFuture(executionId, previous);
+    } else {
+      _startStream(executionId, previous);
+    }
+  }
+
+  Future<void> _startFuture(
+    int executionId,
+    AsyncData<T>? previous,
+  ) async {
+    late Future<T> pending;
     try {
-      final res = await _futureFn();
-      if (execId == _currentExecutionId && !isDisposed) {
-        value = AsyncData(res);
+      pending = _trackSource(_futureFactory!);
+      _operationActive = true;
+    } catch (error, stackTrace) {
+      _setError(executionId, error, stackTrace, previous);
+      return;
+    }
+
+    try {
+      final result = await pending;
+      if (_isCurrent(executionId)) {
+        _operationActive = false;
+        value = AsyncData<T>(result);
       }
-    } catch (err, stack) {
-      if (execId == _currentExecutionId && !isDisposed) {
-        value = AsyncError(err, stack);
-      }
+    } catch (error, stackTrace) {
+      _setError(executionId, error, stackTrace, previous);
     }
   }
 
-  /// Re-triggers the asynchronous operation, invalidating the current execution
-  /// and placing the signal back into a loading state.
-  void refresh() {
-    _fetch();
+  void _startStream(
+    int executionId,
+    AsyncData<T>? previous,
+  ) {
+    late Stream<T> stream;
+    try {
+      stream = _trackSource(_streamFactory!);
+      _operationActive = true;
+    } catch (error, stackTrace) {
+      _setError(executionId, error, stackTrace, previous);
+      return;
+    }
+
+    _streamSubscription = stream.listen(
+      (event) {
+        if (_isCurrent(executionId)) {
+          value = AsyncData<T>(event);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (_isCurrent(executionId)) {
+          final retained = _previousData(peek()) ?? previous;
+          value = AsyncError<T>(
+            error,
+            stackTrace,
+            previous: retained,
+          );
+        }
+      },
+      onDone: () {
+        if (_isCurrent(executionId)) {
+          _operationActive = false;
+          _streamSubscription = null;
+        }
+      },
+    );
   }
 
-  /// Helper pattern matching method that delegates directly to the current [AsyncValue].
+  R _trackSource<R>(R Function() sourceFactory) {
+    pushConsumer(this);
+    clearDependencies();
+    try {
+      return sourceFactory();
+    } finally {
+      popConsumer();
+    }
+  }
+
+  void _setError(
+    int executionId,
+    Object error,
+    StackTrace stackTrace,
+    AsyncData<T>? previous,
+  ) {
+    if (_isCurrent(executionId)) {
+      _operationActive = false;
+      value = AsyncError<T>(
+        error,
+        stackTrace,
+        previous: previous,
+      );
+    }
+  }
+
+  bool _isCurrent(int executionId) =>
+      executionId == _currentExecutionId && !isDisposed;
+
+  AsyncData<T>? _previousData(AsyncValue<T> state) {
+    if (state is AsyncData<T>) return state;
+    if (state is AsyncLoading<T>) return state.previous;
+    if (state is AsyncError<T>) return state.previous;
+    return null;
+  }
+
+  void _cancelActive() {
+    final subscription = _streamSubscription;
+    _streamSubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+
+    if (_operationActive && _onCancel != null) {
+      unawaited(Future<void>.sync(_onCancel!).catchError((_) {}));
+    }
+    _operationActive = false;
+  }
+
+  /// Reloads the source and completes when a Future source settles.
+  ///
+  /// For Stream sources this completes after the new subscription is created.
+  Future<void> refresh() => _start();
+
+  /// Alias for [refresh], useful after an error.
+  Future<void> retry() => _start();
+
+  /// Alias for [refresh].
+  Future<void> reload() => _start();
+
+  /// Invalidates the current operation and immediately starts a new one.
+  Future<void> invalidate() => _start();
+
+  /// Whether previous data is being retained during a refresh.
+  bool get isRefreshing => value.isRefreshing;
+
+  /// Alias for [isRefreshing].
+  bool get isReloading => isRefreshing;
+
+  @override
+  void addDependency(Node node) {
+    _dependencies.add(node);
+  }
+
+  @override
+  void clearDependencies() {
+    for (final dependency in _dependencies) {
+      dependency.removeObserver(this);
+    }
+    _dependencies.clear();
+  }
+
+  /// Reloads when a reactive dependency used by the source changes.
+  @override
+  void notify() {
+    unawaited(_start());
+  }
+
+  /// Pattern matching delegated to the current AsyncValue.
   R when<R>({
     required R Function(T data) data,
     required R Function() loading,
     required R Function(Object error, StackTrace stackTrace) error,
   }) {
-    return value.when(
-      data: data,
-      loading: loading,
-      error: error,
-    );
+    return value.when(data: data, loading: loading, error: error);
   }
 
-  /// Returns `true` if the state is [AsyncLoading].
   bool get isLoading => value.isLoading;
-
-  /// Returns `true` if the state is [AsyncError].
   bool get hasError => value.hasError;
-
-  /// Returns `true` if the state is [AsyncData].
   bool get hasValue => value.hasValue;
-
-  /// Alias for [hasValue].
   bool get hasData => value.hasData;
-
-  /// Returns the value if the state is [AsyncData], otherwise `null`.
   T? get data => value.data;
-
-  /// Returns the value if the state is [AsyncData], otherwise `null`.
   T? get valueOrNull => value.valueOrNull;
-
-  /// Returns the value if the state is [AsyncData], otherwise throws a [StateError].
   T get requireValue => value.requireValue;
 
-  /// Transforms the state to another type by matching the wrapper class.
   R map<R>({
     required R Function(AsyncData<T> data) data,
     required R Function(AsyncLoading<T> loading) loading,
     required R Function(AsyncError<T> error) error,
   }) {
-    return value.map(
-      data: data,
-      loading: loading,
-      error: error,
-    );
+    return value.map(data: data, loading: loading, error: error);
   }
 
-  /// Transforms the state to another type by matching the wrapper class, falling back to [orElse] if unmatched.
   R maybeMap<R>({
     R Function(AsyncData<T> data)? data,
     R Function(AsyncLoading<T> loading)? loading,
@@ -124,7 +282,9 @@ class AsyncSignal<T> extends Signal<AsyncValue<T>> {
   @override
   void dispose() {
     if (isDisposed) return;
-    _currentExecutionId++; // Increment to ignore any pending future resolutions
+    _currentExecutionId++;
+    _cancelActive();
+    clearDependencies();
     super.dispose();
   }
 }

@@ -37,27 +37,45 @@ sealed class AsyncValue<T> {
   bool get hasError => this is AsyncError<T>;
 
   /// Returns `true` if the state is [AsyncData].
-  bool get hasValue => this is AsyncData<T>;
+  bool get hasValue =>
+      this is AsyncData<T> ||
+      (this is AsyncLoading<T> && (this as AsyncLoading<T>).previous != null) ||
+      (this is AsyncError<T> && (this as AsyncError<T>).previous != null);
 
   /// Alias for [hasValue].
   bool get hasData => hasValue;
 
   /// Returns the value if the state is [AsyncData], otherwise `null`.
-  T? get data => when(
-        data: (d) => d,
-        loading: () => null,
-        error: (e, s) => null,
-      );
+  T? get data {
+    final self = this;
+    if (self is AsyncData<T>) return self.value;
+    if (self is AsyncLoading<T>) return self.previous?.value;
+    if (self is AsyncError<T>) return self.previous?.value;
+    return null;
+  }
+
+  /// Whether a loading state is refreshing previously loaded data.
+  bool get isRefreshing =>
+      this is AsyncLoading<T> && (this as AsyncLoading<T>).previous != null;
 
   /// Returns the value if the state is [AsyncData], otherwise `null`.
   T? get valueOrNull => data;
 
   /// Returns the value if the state is [AsyncData], otherwise throws a [StateError].
-  T get requireValue => when(
-        data: (d) => d,
-        loading: () => throw StateError('AsyncValue is in Loading state'),
-        error: (e, s) => throw StateError('AsyncValue has error: $e'),
-      );
+  T get requireValue {
+    final self = this;
+    if (self is AsyncData<T>) return self.value;
+    if (self is AsyncLoading<T> && self.previous != null) {
+      return self.previous!.value;
+    }
+    if (self is AsyncError<T> && self.previous != null) {
+      return self.previous!.value;
+    }
+    if (self is AsyncError<T>) {
+      throw StateError('AsyncValue has error: ' + self.error.toString());
+    }
+    throw StateError('AsyncValue is in Loading state');
+  }
 }
 
 /// The state of an [AsyncValue] when the asynchronous operation has completed successfully.
@@ -110,8 +128,11 @@ class AsyncData<T> extends AsyncValue<T> {
 
 /// The state of an [AsyncValue] when the asynchronous operation is in progress.
 class AsyncLoading<T> extends AsyncValue<T> {
+  /// Data retained while a refresh is in progress.
+  final AsyncData<T>? previous;
+
   /// Creates an [AsyncLoading] state.
-  const AsyncLoading();
+  const AsyncLoading([this.previous]);
 
   @override
   R when<R>({
@@ -143,10 +164,11 @@ class AsyncLoading<T> extends AsyncValue<T> {
   }
 
   @override
-  bool operator ==(Object other) => other is AsyncLoading<T>;
+  bool operator ==(Object other) =>
+      other is AsyncLoading<T> && other.previous == previous;
 
   @override
-  int get hashCode => runtimeType.hashCode;
+  int get hashCode => Object.hash(runtimeType, previous);
 
   @override
   String toString() => 'AsyncLoading<$T>()';
@@ -160,8 +182,11 @@ class AsyncError<T> extends AsyncValue<T> {
   /// The stack trace.
   final StackTrace stackTrace;
 
+  /// Data retained when a refresh fails.
+  final AsyncData<T>? previous;
+
   /// Creates an [AsyncError] state with the given [error] and [stackTrace].
-  const AsyncError(this.error, this.stackTrace);
+  const AsyncError(this.error, this.stackTrace, {this.previous});
 
   @override
   R when<R>({
@@ -195,10 +220,13 @@ class AsyncError<T> extends AsyncValue<T> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is AsyncError<T> && other.error == error && other.stackTrace == stackTrace);
+      (other is AsyncError<T> &&
+          other.error == error &&
+          other.stackTrace == stackTrace &&
+          other.previous == previous);
 
   @override
-  int get hashCode => Object.hash(error, stackTrace);
+  int get hashCode => Object.hash(error, stackTrace, previous);
 
   @override
   String toString() => 'AsyncError($error)';

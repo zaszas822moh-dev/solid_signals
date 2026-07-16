@@ -34,6 +34,24 @@ void main() {
       s.value = 1;
       expect(calls, equals(1));
     });
+
+    test('listen reports changes and can be canceled', () {
+      final signal = Signal(1);
+      final changes = <(int, int)>[];
+
+      final subscription = signal.listen(
+        (previous, current) => changes.add((previous, current)),
+        fireImmediately: true,
+      );
+
+      signal.value = 2;
+      signal.value = 3;
+      subscription.cancel();
+      signal.value = 4;
+
+      expect(changes, equals([(1, 1), (1, 2), (2, 3)]));
+      expect(subscription.isCanceled, isTrue);
+    });
   });
 
   group('Computed', () {
@@ -136,6 +154,21 @@ void main() {
       eff.dispose();
       s.value = 3;
       expect(list, equals([1, 2])); // no more runs after dispose
+    });
+
+    test('runs registered cleanup before rerun and on dispose', () {
+      final signal = Signal(1);
+      final cleanups = <int>[];
+      final eff = effectWithCleanup((onCleanup) {
+        final value = signal.value;
+        onCleanup(() => cleanups.add(value));
+      });
+
+      signal.value = 2;
+      expect(cleanups, equals([1]));
+
+      eff.dispose();
+      expect(cleanups, equals([1, 2]));
     });
   });
 
@@ -290,6 +323,91 @@ void main() {
 
       // The value should still be AsyncLoading (since updates from the old future are ignored)
       expect(s.value, equals(const AsyncLoading<int>()));
+    });
+
+    test('tracks source dependencies and reloads automatically', () async {
+      final id = Signal(1);
+      var fetchCount = 0;
+      final signal = AsyncSignal.fromFuture(() async {
+        fetchCount++;
+        return id.value * 10;
+      });
+
+      await Future<void>.delayed(Duration.zero);
+      expect(signal.value, equals(const AsyncData(10)));
+
+      id.value = 2;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fetchCount, equals(2));
+      expect(signal.value, equals(const AsyncData(20)));
+    });
+
+    test('retains previous data while refreshing', () async {
+      final requests = <Completer<int>>[];
+      final signal = AsyncSignal.fromFuture(() {
+        final request = Completer<int>();
+        requests.add(request);
+        return request.future;
+      });
+
+      requests.first.complete(10);
+      await Future<void>.delayed(Duration.zero);
+
+      final refresh = signal.refresh();
+      expect(signal.isRefreshing, isTrue);
+      expect(signal.data, equals(10));
+      expect(signal.value, equals(const AsyncLoading<int>(AsyncData(10))));
+
+      requests.last.complete(20);
+      await refresh;
+      expect(signal.value, equals(const AsyncData(20)));
+    });
+
+    test('supports streams and cancels the active subscription', () async {
+      final first = StreamController<int>();
+      final second = StreamController<int>();
+      var source = first;
+      final signal = AsyncSignal.fromStream(() => source.stream);
+
+      first.add(1);
+      await Future<void>.delayed(Duration.zero);
+      expect(signal.value, equals(const AsyncData(1)));
+
+      source = second;
+      await signal.refresh();
+      expect(signal.isRefreshing, isTrue);
+      expect(signal.data, equals(1));
+
+      first.add(2);
+      second.add(3);
+      await Future<void>.delayed(Duration.zero);
+      expect(signal.value, equals(const AsyncData(3)));
+
+      signal.dispose();
+      await first.close();
+      await second.close();
+    });
+
+    test('invokes cancellation hook on reload and dispose', () async {
+      var cancellationCount = 0;
+      final requests = <Completer<int>>[];
+      final signal = AsyncSignal.fromFuture(
+        () {
+          final request = Completer<int>();
+          requests.add(request);
+          return request.future;
+        },
+        onCancel: () => cancellationCount++,
+      );
+
+      unawaited(signal.reload());
+      await Future<void>.delayed(Duration.zero);
+      expect(cancellationCount, equals(1));
+
+      signal.dispose();
+      await Future<void>.delayed(Duration.zero);
+      expect(cancellationCount, equals(2));
     });
   });
 

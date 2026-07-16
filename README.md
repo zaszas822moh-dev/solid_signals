@@ -54,6 +54,17 @@ print(counter.value); // Read
 counter.value = 10;   // Mutate
 ```
 
+Listen outside the widget tree and cancel the subscription when it is no
+longer needed:
+
+~~~dart
+final subscription = counter.listen((previous, current) {
+  print('$previous -> $current');
+});
+
+subscription.cancel();
+~~~
+
 ### 2. Computed
 `Computed` values derive their state from other signals or computed values. They evaluate lazily, cache their results, and automatically recompute only when their dependencies change.
 
@@ -85,7 +96,27 @@ final eff = (() => print("Current count: ${count.value}")).effect;
 eff.dispose();
 ```
 
-### 4. Persistence & Hydration
+### 4. Async Signals
+
+Async signals support futures, streams, retrying, retained data during
+refresh, cancellation hooks, and automatic reloads when synchronously-read
+signal dependencies change:
+
+~~~dart
+final userId = 1.signal;
+final user = AsyncSignal.fromFuture(
+  () => api.loadUser(userId.value),
+  onCancel: api.cancelCurrentRequest,
+);
+
+await user.refresh();
+
+final messages = AsyncSignal.fromStream(
+  () => api.messages(userId.value),
+);
+~~~
+
+### 5. Persistence & Hydration
 Hydrate signals to save and load state automatically when the app restarts. You can set a global storage provider or pass a custom one.
 
 ```dart

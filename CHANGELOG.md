@@ -1,3 +1,10 @@
+## Unreleased
+
+* Added cancellable Signal.listen subscriptions with previous/current values.
+* Added Signal.peek for untracked reads.
+* Added reactive Future sources, Stream sources, cancellation hooks, retry,
+  reload, invalidation, and retained data during AsyncSignal refreshes.
+
 ## 1.0.0
 
 * Initial stable release of `solid_signals`.

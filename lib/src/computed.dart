@@ -51,7 +51,8 @@ class Computed<T> extends Node implements DependencyTracker {
     // 2. Recompute and cache if dirty
     if (_isDirty) {
       if (_isComputing) {
-        throw StateError("Circular dependency detected during evaluation of Computed!");
+        throw StateError(
+            "Circular dependency detected during evaluation of Computed!");
       }
       _isComputing = true;
       pushConsumer(this);
